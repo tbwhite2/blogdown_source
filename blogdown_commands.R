@@ -10,3 +10,5 @@ new_site(dir = 'blogdown_source',
 new_post(title = 'hello-world.Rmd')
 
 build_site()
+
+serve_site()

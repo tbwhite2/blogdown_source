@@ -1,0 +1,443 @@
+---
+title: "Cake Recipe Community Health"
+author: "Bryan White"
+date: '2017-07-12'
+output: html_document
+---
+
+This is an analysis of the volume and authorship of cake recipes published on Food52's community 
+dirven recipe database.  Covered in this post are general trends on the amount of recipes published,
+who's publishing the reicpes and what patterns exist in the communtiy.  It was discovered that while
+the rate of new authorship and the activity of frequent authors has declined since 2014, the amount
+published per author has increased to keep the total number of new recipes added stable.  
+
+```{r, echo = FALSE, message=F, warning=F}
+library(plyr)
+library(tidyverse)
+library(magrittr)
+library(stringr)
+library(plotly)
+library(NLP)
+library(openNLP)
+library(lubridate)
+library(broom)
+
+
+
+recipe_info <- readRDS("recipe_info.RDS")
+
+recipe_info %<>%
+  mutate(favorite_count = str_replace_all(favorite_count,",","")) %>% 
+  mutate(favorite_count = as.numeric(favorite_count)) %>% 
+  mutate(comments_count = as.numeric(comments_count)) %>% 
+  filter(!is.na(favorite_count)) 
+
+recipe_info %<>% 
+  mutate(recipe_name = str_replace(url, "(\\/recipes\\/[0-9]+\\-)","")) %>% 
+  mutate(recipe_name = str_replace_all(recipe_name, "-"," "))
+```
+
+# Cumulative number of recipes published over time
+Over time, the annual average rate of cake recipes added per day has ranged between 1 recipe every 
+2 days (.5 per day) and 6 recipes every 5 days (1.2 recipes per day).  2014 was the period of 
+highest growth in the collection of recipes with an average of 1.2 recipes per day.  The plot below 
+highlights this period in yellow.  
+
+The plot below also shows that currently the number of cake recipes added per day is cooling down 
+slowly from its high in 2014.  The year to date average number of recipes added per day is just over
+1 per day.  This average rate of increase still allows for great diversity and breadth of new cakes
+to be added to the community collection of recipes, though further slowing of the rate may indicate
+the community is less engaged with contributing new material.
+```{r, echo = F}
+date_summary <- recipe_info %>% 
+  group_by(date_published) %>% 
+  summarise(count_published = n()) %>% 
+  ungroup() 
+
+all_dates <- data_frame(date = seq.Date(min(date_summary$date_published),
+                                        max(date_summary$date_published),
+                                        by = "day")
+                        )
+date_summary_full <- left_join(all_dates, date_summary, by = c("date" = "date_published")) 
+
+date_summary_full[is.na(date_summary_full)] <- 0
+
+date_summary_full %<>% 
+  mutate(cumulative_published = cumsum(count_published))
+
+# plot_ly(data = date_summary_full, y = ~cumulative_published, x = ~date,
+#         type = 'scatter', mode = 'markers' )
+
+date_summary_full %<>% 
+  mutate(trend = row_number()) %>% 
+  mutate(pub_year = year(date))
+
+date_summary_full_split <- split(date_summary_full,date_summary_full$pub_year)
+trendy <- function(split_data){
+  # split_data <- test_split[[1]]
+lm_trend <- lm(cumulative_published~trend,data = split_data)
+split_data$predicted_values <- predict(lm_trend, newdata = split_data)
+split_data$rate <- lm_trend$coefficients["trend"]
+split_data
+}
+
+date_summary_full <- map(date_summary_full_split, trendy) %>% bind_rows()
+date_summary_full %<>% filter(predicted_values > 0) %>% rename(Rate = rate)
+plot_ly(data = date_summary_full, y=~predicted_values, x = ~date, 
+        type = 'scatter', mode = 'markers', color = ~Rate, showlegend=FALSE) %>% 
+  layout(
+    xaxis = list(range = c(min(date_summary_full$date)-5,max(date_summary_full$date) + 5),
+                 title = ""),
+    yaxis = list(title = "Number of Recipes"))
+```
+
+
+#Distinct Authors over time and their contributions
+
+During late 2013-2014, the number of distinct recipe authors per month increased to their highest 
+levels. Since this period, the number of distinct authors has slowly declined to an average of 19 
+authors per month in 2017. 
+
+Interestingly, this decrease in the number of distinct authors has been
+compensated by the rapid growth in contributions per author.  In the plot below the increase in 
+contributrions per author is noted by color, more red indicates higher average contributions per
+author.  In 2017, the average monthly contributions per author is 7, this is a 75% increase in 
+authorship since 2015-2016 and a 130% increase from 2013-2014.  This trend is driven primarily by 
+professional chefs ('Oh Sweet Day!', 'Jordan Rondel, The Caker',Alice Medrich) and Food52 staff
+(Sarah Jampel, Food52).
+
+```{r,echo=F}
+distinct_authors <- recipe_info %>% 
+  mutate(pub_year = year(date_published)) %>%
+  mutate(pub_month = month(date_published)) %>% 
+  group_by(pub_year, recipe_author) %>% 
+  mutate(per_author_ann_contributions = n()) %>% 
+  group_by(pub_year) %>% 
+  mutate(avg_ann_contributions = mean(per_author_ann_contributions)) %>% 
+  group_by(pub_year,pub_month) %>% 
+  summarise(distinct_authors = n_distinct(recipe_author),
+            avg_ann_contributions = mean(avg_ann_contributions)) %>%
+  ungroup() %>% 
+  mutate(year_month = paste0(pub_year,"_",pub_month)) %>% 
+  arrange(pub_year,pub_month) %>% 
+  mutate(y_m_order = row_number()) %>% 
+  mutate(pub_year = as.character(pub_year))
+
+numeric_color_ramp <- function(vals, start_color, end_color){
+  vals <- vals %>% unique()
+  ii <- cut(vals, breaks = seq(min(vals), max(vals), len = length(vals)*2), 
+            include.lowest = TRUE)
+  ## Use bin indices, ii, to select color from vector of n-1 equally spaced colors
+  colorRampPalette(c("#0868ac", "#e31a1c"))(length(vals)*2)[ii]
+}
+
+distinct_authors_color_scale <- distinct_authors %>% 
+  group_by(pub_year) %>% 
+  summarise(avg_ann_contributions = mean(avg_ann_contributions)) %>% 
+  ungroup() %>% 
+  arrange(avg_ann_contributions) %>% 
+  mutate(color_col = numeric_color_ramp(avg_ann_contributions))
+distinct_authors = inner_join(distinct_authors,distinct_authors_color_scale,
+                          by = c("pub_year", "avg_ann_contributions")) %>% 
+  mutate(year_month = as.Date(paste0(year_month,"_01"),f = "%Y_%m_%d"))
+plot_ly(distinct_authors,
+        x = ~year_month,
+        y = ~distinct_authors, type = 'scatter', mode = 'lines',color = ~pub_year,
+        colors = distinct_authors_color_scale$color_col,showlegend=FALSE) %>% 
+  layout(
+    xaxis = list(range = c(min(date_summary_full$date)-5,max(date_summary_full$date) + 5),
+                 title = ""),
+    yaxis = list(title = "Distinct Number of Authors"))
+```
+*More red lines indicate higher rates of recipes contributed per recipe author*
+ 
+#New Authors
+The rate of new authors contributing to Food52 has increased so far in 2017 relative to the slow 
+down in new author contributions frm 2015-2016.  Combining this plot with the previous plots show 
+new authors were the primary contributors to the recipe boom of 2014.
+
+```{r, echo = F}
+new_postings <- recipe_info %>% 
+  group_by(recipe_author) %>% 
+  filter(date_published == min(date_published)) 
+
+new_postings_full <-left_join(all_dates,new_postings, by = c("date" = "date_published"))
+
+new_postings_full %<>% 
+  ungroup() %>% 
+  mutate(recipe_author = ifelse(is.na(recipe_author),0,1)) %>% 
+  group_by(date) %>% 
+  summarise(total_new_authors = sum(recipe_author)) %>% 
+  ungroup() %>% 
+  mutate(cumulative_new_authors = cumsum(total_new_authors))
+
+new_postings_full  %<>% 
+  mutate(trend = row_number()) %>% 
+  mutate(pub_year = year(date))
+
+new_postings_full_split <- split(new_postings_full,new_postings_full$pub_year)
+trendy <- function(split_data){
+  # split_data <- test_split[[1]]
+  lm_trend <- lm(cumulative_new_authors~trend,data = split_data)
+  split_data$predicted_values <- predict(lm_trend, newdata = split_data)
+  split_data$rate <- lm_trend$coefficients["trend"]
+  split_data
+}
+
+new_postings_full <- map(new_postings_full_split, trendy) %>% bind_rows()
+new_postings_full%<>% filter(predicted_values > 0) %>% rename(Rate = rate)
+
+plot_ly(data = date_summary_full, y=~predicted_values, x = ~date, 
+        type = 'scatter', mode = 'markers', color = ~Rate, showlegend=FALSE) %>% 
+  layout(
+    xaxis = list(range = c(min(date_summary_full$date)-5,max(date_summary_full$date) + 5),
+                 title = ""),
+    yaxis = list(title = "Number of New Authors"))
+
+```
+
+# Single/Multiple Contributors
+As the data has shown so far, new authors are very important to increasing the number of recipes 
+added to the community cake collection.  The data has also shown that multiple contributions from 
+a single author can have a large impact.  The difference in contributions are shown below. Those 
+that have contributed more than one recipe are classifed as as 'multiple contributors' and those 
+that have contributed one recipe as 'single contributors'.  The plot shows in recent years 
+there is a widening gap in contributions between the two groups.  This is in part 
+due to a decreased rate of new authorship, but there appears to be more than a simple relationship 
+in the data.
+
+```{r, echo=F, message=F}
+multiple_cont <- recipe_info %>% 
+  group_by(recipe_author) %>% 
+  summarise(count = n()) %>% 
+  filter(count > 1) %>% 
+  mutate(multiple_contributions = T)
+#only 361 (31%) have contributed multiple cakes
+#what percent of new cakes contributed are contributed by first time vs repeat 
+
+recipe_info_multi <- left_join(recipe_info,multiple_cont) %>% 
+  mutate(multiple_contributions = ifelse(is.na(multiple_contributions),
+                                         "single_contribution",
+                                         "multiple_contributions")) %>% 
+  mutate(pub_year = year(date_published)) %>%
+  mutate(pub_month = month(date_published)) %>% 
+  group_by(pub_year, pub_month,multiple_contributions) %>% 
+  summarise(count_recipes = n()) %>% 
+  ungroup() %>% 
+  spread(multiple_contributions,count_recipes) %>% 
+  arrange(pub_year,pub_month) %>% 
+  mutate(m_y_order = row_number()) %>% 
+  mutate(year_month = paste0(pub_year,"_",pub_month)) 
+recipe_info_multi[is.na(recipe_info_multi)] <- 0
+  
+recipe_info_multi %<>%
+  mutate(total_contributions = multiple_contributions + single_contribution) %>% 
+  mutate(percent_multiple_contributions = multiple_contributions/total_contributions) %>% 
+  mutate(percent_single_contributions = single_contribution/total_contributions) %>% 
+  mutate(year_month_date = as.Date(paste0(year_month,"_01"),f = "%Y_%m_%d"))
+  
+#Over time, the difference between the contributions of single and multiple contributors have 
+# diverged (test).  Contests drive increased numbers of recipes from both groups, but multiple 
+# contributors seem to be driven more (test).
+plot_ly(data = recipe_info_multi,
+        # x = ~forcats::fct_reorder(year_month,m_y_order),
+        x = ~year_month_date,
+        y = ~multiple_contributions,
+        type = 'scatter', mode = 'lines', name = "multiple") %>% 
+  add_trace(y = ~single_contribution, name = "single") %>% 
+  layout(
+    xaxis = list(title = ""),
+    yaxis = list(title = "Recipes Added"))
+```
+
+## Model the differences
+
+A model based approach lets us see the more nuanced differences between the two groups of 
+contributors.  Many possible variables were tested to analyze the difference in the groups, but the 
+most explanatory variables are time and the presence of an active contest.  
+
+On average, both single 
+and multiple contributor groups are expected to contribute more recipes over time, but at different
+rates. The model projects recipe contributions to increase by one every 4 months for multiple
+contributors and  one every 14 months for single contributors. 
+
+Active contests were also found to increase the expected amount of new recipes added by both groups.
+The impact of contests were found by investigating the spikes found at semi regular points on the 
+above graph.  An example can be seen in November of 2014 with the 'Your best Breakfast Baked Good'
+contest.  Both groups saw a spike in contributions above what would normally be expected.  
+Active contests were found to be dependent on the type of contributor. The monthly expected recipe
+count increases by 16 for multiple contributors and by 10 for single contributors
+
+```{r, echo=F, message = F}
+recipe_info_multi_lm <- recipe_info_multi %>% 
+  select(m_y_order,year_month,multiple_contributions, single_contribution) %>% 
+  gather(contributor_type, amount_contributed, -m_y_order,-year_month)
+  
+test_lm <- lm(amount_contributed~m_y_order*contributor_type, data = recipe_info_multi_lm)
+#This shows that the number of recipes commited has increased on average by 1 every 5 months, 
+#this rate is slower for single contributors.
+# summary(test_lm)
+#data based on researching spikes in both contributor types.  Found that many of the spikes in 
+#contributions were associated to a theme ie carrot or cardmom cakes.  These associations map well
+#to active contests during the month observed.
+contests <- data_frame(year_month = c("2009_9","2010_1","2009_6","2013_5","2011_2",
+                                      "2014_11","2013_10","2010_11","2011_3","2011_6","2014_7"),
+                       
+                       contest_title = c("Best Apple Cake","Best Chocolate Cake", "Best Layer Cake",
+                                        "Best Recipe with Coconut",
+                                         "Best Recipe with Cardmom",
+                                         "Your Best Breakfast Baked Good","Best Recipe for Frosting",
+                                         "Your Best Non-Pie Thanksgiving Dessert",
+                                         "Your Best Carrot Recipe",
+                                         "Your Best Gluten-Free Baked Good",
+                                         "Your Best Berry Recipe"
+                                         )
+                       )
+
+recipe_info_multi_lm %<>% 
+  left_join(contests) %>% 
+  mutate(active_contest = ifelse(is.na(contest_title),"no","yes"))
+
+test_lm <- lm(amount_contributed~m_y_order + contributor_type + active_contest +
+              m_y_order*contributor_type + contributor_type*active_contest,
+              data = recipe_info_multi_lm)
+
+# this model projects recipe contributions to increase by one every 4 months for multiple
+# contributors and  one every 14 months for single contributors.  Active contests increase the 
+# monthly expected recipe count by 16 for multiple contributors and by 10 for single contributors
+summary(test_lm)
+```
+
+#Active Multiple contributors
+
+As shown above, on average multiple contributors add more recipes per month than single contributors 
+and they are expected to continue to do so.  By summing the total number of recipes contributed by
+group, multiple contributors have authored 67% of the cake recipes in this data while only 
+comprising 31% of the population of authors.
+
+With this in mind, lets look at the survivorship of multiple contributors.  
+
+For this analysis, an 'active conttributor' is a multiple contributor who has published in the last
+135 days.  135 days was chosen because it is the 75% percentile of days between publishing for
+multiple contributors.  This means that 75% of the intra publishing times for new recipes is 
+less than 135 days.  
+
+By totalling the number of active contributors over every day within the data, we get the plot 
+below.  The plot below shows a decrease in the number of active multiple contributors in recent 
+history.  
+
+```{r, echo = F, message=F}
+multi_info <- inner_join(recipe_info, multiple_cont) %>% 
+  group_by(recipe_author) %>% 
+  arrange(date_published) %>% 
+  mutate(time_since_last_post = difftime(date_published,lag(date_published),units = "days" )) %>% 
+  ungroup() %>% 
+  mutate(time_since_last_post = as.numeric(time_since_last_post)) 
+
+# multi_info %>% 
+#   filter(!is.na(time_since_last_post)) %>% 
+#   .$time_since_last_post %>% 
+#   quantile()
+#75% of times between posts are 135, this will serve as a cutoff for 'active repeat user'
+
+author_split <- split(multi_info, multi_info$recipe_author)
+
+# auth_split <- author_split[["aargersi"]]
+# time_liner(days_since_cake = as$time_since_last_post,churn_time = 135)
+# days_since_cake %<>% as.numeric() 
+# days_since_cake <- as$time_since_last_post
+# churn_time <- 135
+length_period <- function(dates, churn_time){
+  if(length(dates) == 1){
+    churn_time
+  }else{
+    as.numeric(difftime(max(dates),min(dates),units = "days") )+ 135
+  }
+}
+
+time_liner <- function(auth_split, churn_time){
+  days_since_cake <- auth_split$time_since_last_post
+  days_since_cake[is.na(days_since_cake)] <- 0
+  period <- rep(NA, length(days_since_cake))
+  per <- 1
+  while(length(days_since_cake)){
+    
+    if(length(days_since_cake) == 1){
+      period[is.na(period)] <- per
+      days_since_cake <- NULL
+    }else{
+      days_since_cake[1] <- 0
+      if(max(days_since_cake) < 135){
+        period[is.na(period)] <- per
+        days_since_cake <- NULL
+      }else{
+      first_new_period <- min(which(days_since_cake >= churn_time))
+      within_window <- days_since_cake < churn_time
+      within_window[first_new_period:length(within_window)] <- F
+      period[c(rep(F,sum(!is.na(period))),within_window)] <- per
+      days_since_cake <- days_since_cake[!within_window]
+      per <- per + 1
+      }
+    }
+    
+    
+  }
+  auth_split$period <- period
+  auth_split %>% 
+    group_by(period) %>% 
+    mutate(period_length = length_period(date_published, churn_time)) %>% 
+    ungroup()
+}
+
+# time_liner(auth_split = author_split[["adinab"]], 135)
+
+multi_info <- map(author_split,time_liner,churn_time = 135) %>% bind_rows()
+
+multi_info_summary <- multi_info %>% 
+  group_by(recipe_author,period) %>% 
+  summarise(period_begin = min(date_published),
+            number_contributions_period = n(),
+            period_length = max(period_length)) %>% 
+  ungroup()
+
+really_now_single <- multi_info_summary %>% 
+  group_by(recipe_author) %>% 
+  filter(period == max(period)) %>% 
+  filter(number_contributions_period == 1) %>% 
+  ungroup() %>% 
+  filter(period_begin + days(period_length) < max(recipe_info$date_published))
+
+multi_info_summary <- anti_join(multi_info_summary, really_now_single, by = c("recipe_author" = "recipe_author", "period" = "period"))
+
+multi_info_summary %<>% 
+  mutate(auth_period = paste0(recipe_author,"_", period))
+multi_info_summary_split <- split(multi_info_summary,multi_info_summary$auth_period)
+test <- multi_info_summary_split[[1]]
+date_expander <- function(split_data){
+data_frame(
+  auth_period = split_data$auth_period,
+  contributions = split_data$number_contributions_period,
+  dates = seq.Date(split_data$period_begin,split_data$period_begin + 
+                     days(split_data$period_length),by = "days")
+)
+}
+testo <- map(multi_info_summary_split, date_expander) %>% bind_rows() 
+testo_1 <- testo %>%
+  filter(dates < max(recipe_info$date_published)) %>% 
+  group_by(dates) %>% 
+  summarise(count_periods = n())
+
+plot_ly(data = testo_1, y = ~count_periods, x = ~dates,
+       type = 'scatter', mode = 'markers' )
+```
+
+# Summary
+
+The number of people contributing to the community based collection of cake recipes on 
+Food52 is not as large as it has been, but because of the increased rate of per author publications
+the realative number of new recipes the commuity enjoys each month has remained high.  To ensure
+the continued vigor in the community, Food52 should continue to do all it can to increase enagement 
+of multiple contributors and new contributors alike.  Well publicized competitions and growing
+the vibrant community of users are proven steps to do this. 
+
+

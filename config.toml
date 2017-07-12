@@ -16,7 +16,7 @@ baseurl = "https://tbwhite2.github.io/"
 publishDir = "../tbwhite2.github.io"
 languageCode = "en-us"
 defaultContentLanguage = "en-us"
-title = "Data Stuffed R Buns"
+title = "Cooking with Data"
 theme = "hugo-tranquilpeak-theme"
 disqusShortname = "hugo-tranquilpeak-theme"
 # googleAnalytics = "UA-123-45"
@@ -40,7 +40,7 @@ canonifyurls = true
   #gravatarEmail = "thibaud.lepretre@gmail.com"
   # Your profile picture
   # Overwritten by your gravatar image if `author.gravatarEmail` is filled
-  picture = "https://goo.gl/photos/K1K2TooTn4vr2Box6"
+  picture = "http://res.cloudinary.com/dwb3efkwl/image/upload/c_crop,h_1900,w_1900,x_1300,y_153/v1493905722/untitled-4973_eooxoh.jpg"
   # Your Twitter username without the @. E.g : thibaudlepretre
   # twitter = "GreatWhiteBryan"
   # Your google plus profile id. E.g : +ThibaudLepretre or 114625208755123718311
